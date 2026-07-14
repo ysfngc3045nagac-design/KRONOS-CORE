@@ -32,7 +32,7 @@ app = FastAPI(title="Kronos", version="0.2.0")
 
 
 def _build_model():
-    provider = os.environ.get("MODEL_PROVIDER", "gemini").lower()
+    provider = os.environ.get("MODEL_PROVIDER", "groq").lower()
 
     if provider == "anthropic":
         from core.models.anthropic_adapter import AnthropicAdapter
@@ -42,8 +42,12 @@ def _build_model():
         from core.models.gemini_adapter import GeminiAdapter
         return GeminiAdapter()
 
+    if provider == "groq":
+        from core.models.groq_adapter import GroqAdapter
+        return GroqAdapter()
+
     raise RuntimeError(
-        f"Bilinmeyen MODEL_PROVIDER: '{provider}'. 'anthropic' veya 'gemini' olmalı."
+        f"Bilinmeyen MODEL_PROVIDER: '{provider}'. 'anthropic', 'gemini' veya 'groq' olmalı."
     )
 
 
