@@ -7,11 +7,11 @@ Kronos'un "beyin sapı". Bir kullanıcı mesajı geldiğinde:
   3. Model bir araç çağırmak isterse aracı çalıştırır ve sonucu modele geri verir
   4. Model son metin yanıtını verene kadar bu döngüyü tekrarlar
 
-Faz 1'de tek bir model + tek bir hafıza + araç kaydı var. Birden fazla
-"uzman ekip" (teams/) devreye girdiğinde bu dosya, işi hangi ekibe
-yönlendireceğine karar veren bir router'a dönüşecek — ama o iş, gerçek
-ihtiyaç ortaya çıkınca yapılacak.
+Faz 2: hafıza artık dışarıdan enjekte edilebiliyor (varsayılan: ShortTermMemory,
+kalıcı sohbet için PersistentMemory verilebilir).
 """
+
+from typing import Optional
 
 from core.memory.short_term import ShortTermMemory
 from core.models.interface import ModelAdapter
@@ -25,12 +25,13 @@ class Dispatcher:
         tools: ToolRegistry,
         system_prompt: str = "",
         max_tool_iterations: int = 5,
+        memory: Optional[object] = None,
     ):
         self.model = model
         self.tools = tools
         self.system_prompt = system_prompt
         self.max_tool_iterations = max_tool_iterations
-        self.memory = ShortTermMemory()
+        self.memory = memory if memory is not None else ShortTermMemory()
 
     def handle_message(self, user_input: str) -> str:
         self.memory.add_user_message(user_input)

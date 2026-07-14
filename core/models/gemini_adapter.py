@@ -2,8 +2,10 @@
 core/models/gemini_adapter.py
 
 interface.py'deki ModelAdapter sözleşmesinin Google Gemini API ile
-dolduruluşu. Kredi kartı gerektirmeyen ücretsiz kotaya sahip bir
-sağlayıcı olarak eklendi.
+dolduruluşu. Faz 2: artık araç çağırma (function calling) da destekleniyor,
+dispatcher.py'nin ürettiği Anthropic tarzı mesaj bloklarını (tool_use,
+tool_result) Gemini'nin beklediği function_call / function_response
+formatına çevirir.
 
 Ortam değişkeni gerekli: GEMINI_API_KEY
 (Render'da: Environment > Add Environment Variable)
@@ -26,34 +28,76 @@ class GeminiAdapter(ModelAdapter):
                 "GEMINI_API_KEY bulunamadı. Render ortam değişkenlerine eklemen gerekiyor."
             )
         genai.configure(api_key=key)
-        self.client = genai.GenerativeModel(self.model_name)
+        # call_id -> tool adı eşlemesi; tool_result bloklarında sadece
+        # call_id geldiği için Gemini'nin function_response'unda gereken
+        # "name" alanını buradan buluyoruz.
+        self._call_id_to_name: dict[str, str] = {}
 
     def name(self) -> str:
         return f"gemini:{self.model_name}"
 
-    def _to_gemini_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Anthropic tarzı {role, content} mesajlarını Gemini formatına çevirir."""
-        converted = []
+    def _tools_to_gemini(self, tools: Optional[list[dict[str, Any]]]):
+        if not tools:
+            return None
+        declarations = []
+        for t in tools:
+            declarations.append(
+                {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": t.get("input_schema", {"type": "object", "properties": {}}),
+                }
+            )
+        return [{"function_declarations": declarations}]
+
+    def _to_gemini_contents(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        contents: list[dict[str, Any]] = []
+
         for msg in messages:
-            role = "model" if msg.get("role") == "assistant" else "user"
+            role = msg.get("role")
             content = msg.get("content", "")
 
             if isinstance(content, str):
-                text = content
-            else:
-                # Anthropic tarzı blok listesi geldiyse (tool_use/tool_result vs.)
-                # sadece metin bloklarını al; Faz 1'de araçsız kullanım için yeterli.
-                text_parts = [
-                    block.get("text", "")
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                ]
-                text = "".join(text_parts)
+                gemini_role = "model" if role == "assistant" else "user"
+                if content:
+                    contents.append({"role": gemini_role, "parts": [{"text": content}]})
+                continue
 
-            if text:
-                converted.append({"role": role, "parts": [text]})
+            # content bir blok listesi (text / tool_use / tool_result)
+            parts = []
+            for block in content:
+                btype = block.get("type")
 
-        return converted
+                if btype == "text" and block.get("text"):
+                    parts.append({"text": block["text"]})
+
+                elif btype == "tool_use":
+                    self._call_id_to_name[block["id"]] = block["name"]
+                    parts.append(
+                        {
+                            "function_call": {
+                                "name": block["name"],
+                                "args": block.get("input", {}),
+                            }
+                        }
+                    )
+
+                elif btype == "tool_result":
+                    tool_name = self._call_id_to_name.get(block["tool_use_id"], "unknown_tool")
+                    parts.append(
+                        {
+                            "function_response": {
+                                "name": tool_name,
+                                "response": {"result": block.get("content", "")},
+                            }
+                        }
+                    )
+
+            if parts:
+                gemini_role = "model" if role == "assistant" else "user"
+                contents.append({"role": gemini_role, "parts": parts})
+
+        return contents
 
     def complete(
         self,
@@ -62,18 +106,40 @@ class GeminiAdapter(ModelAdapter):
         tools: Optional[list[dict[str, Any]]] = None,
         max_tokens: int = 1024,
     ) -> ModelResponse:
-        gemini_messages = self._to_gemini_messages(messages)
+        contents = self._to_gemini_contents(messages)
+        gemini_tools = self._tools_to_gemini(tools)
 
-        model = self.client
+        model_kwargs: dict[str, Any] = {}
         if system:
-            model = genai.GenerativeModel(self.model_name, system_instruction=system)
+            model_kwargs["system_instruction"] = system
+        if gemini_tools:
+            model_kwargs["tools"] = gemini_tools
+
+        model = genai.GenerativeModel(self.model_name, **model_kwargs)
 
         response = model.generate_content(
-            gemini_messages,
+            contents,
             generation_config={"max_output_tokens": max_tokens},
         )
 
-        text = response.text if response.candidates else ""
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+
+        if response.candidates:
+            for idx, part in enumerate(response.candidates[0].content.parts):
+                if getattr(part, "text", None):
+                    text_parts.append(part.text)
+                elif getattr(part, "function_call", None) and part.function_call.name:
+                    fc = part.function_call
+                    call_id = f"{fc.name}_{idx}"
+                    self._call_id_to_name[call_id] = fc.name
+                    tool_calls.append(
+                        ToolCall(
+                            name=fc.name,
+                            arguments=dict(fc.args) if fc.args else {},
+                            call_id=call_id,
+                        )
+                    )
 
         usage = None
         if hasattr(response, "usage_metadata") and response.usage_metadata:
@@ -82,13 +148,9 @@ class GeminiAdapter(ModelAdapter):
                 "output_tokens": response.usage_metadata.candidates_token_count,
             }
 
-        # Not: Gemini'nin fonksiyon çağırma (tool use) formatı Anthropic'ten
-        # farklıdır. Faz 1'de tool_calls desteklenmiyor; ileride ihtiyaç
-        # olursa response.candidates[0].content.parts içindeki
-        # function_call bloklarından ToolCall listesi üretilebilir.
         return ModelResponse(
-            text=text,
-            tool_calls=[],
+            text="".join(text_parts),
+            tool_calls=tool_calls,
             raw=response,
             usage=usage,
         )
