@@ -18,7 +18,7 @@ from core.models.interface import ModelAdapter, ModelResponse, ToolCall
 
 
 class GeminiAdapter(ModelAdapter):
-    def __init__(self, model: str = "gemini-2.5-flash", api_key: Optional[str] = None):
+    def __init__(self, model: str = "gemini-flash-latest", api_key: Optional[str] = None):
         self.model_name = model
         key = api_key or os.environ.get("GEMINI_API_KEY")
         if not key:
