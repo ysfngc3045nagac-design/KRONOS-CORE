@@ -1,14 +1,5 @@
 """
 core/models/gemini_adapter.py
-
-interface.py'deki ModelAdapter sözleşmesinin Google Gemini API ile
-dolduruluşu. Faz 2: artık araç çağırma (function calling) da destekleniyor,
-dispatcher.py'nin ürettiği Anthropic tarzı mesaj bloklarını (tool_use,
-tool_result) Gemini'nin beklediği function_call / function_response
-formatına çevirir.
-
-Ortam değişkeni gerekli: GEMINI_API_KEY
-(Render'da: Environment > Add Environment Variable)
 """
 
 import os
@@ -25,23 +16,16 @@ class GeminiAdapter(ModelAdapter):
         key = api_key or os.environ.get("GEMINI_API_KEY")
         if not key:
             raise RuntimeError(
-                "GEMINI_API_KEY bulunamadı. Render ortam değişkenlerine eklemen gerekiyor."
+                "GEMINI_API_KEY bulunamadi. Render ortam degiskenlerine eklemen gerekiyor."
             )
         genai.configure(api_key=key)
-        # call_id -> tool adı eşlemesi; tool_result bloklarında sadece
-        # call_id geldiği için Gemini'nin function_response'unda gereken
-        # "name" alanını buradan buluyoruz.
         self._call_id_to_name: dict[str, str] = {}
-        # call_id -> thought_signature. Gemini'nin düşünen (thinking)
-        # modelleri bir fonksiyon çağrısı yaptığında bir "düşünce imzası"
-        # döndürür; bu imza sonraki turda aynı function_call parçasında
-        # geri gönderilmezse API 400 hatası verir.
-        self._call_id_to_signature: dict[str, bytes] = {}
+        self._call_id_to_signature: dict[str, str] = {}
 
     def name(self) -> str:
         return f"gemini:{self.model_name}"
 
-    def _tools_to_gemini(self, tools: Optional[list[dict[str, Any]]]):
+    def _tools_to_gemini(self, tools):
         if not tools:
             return None
         declarations = []
@@ -55,9 +39,8 @@ class GeminiAdapter(ModelAdapter):
             )
         return [{"function_declarations": declarations}]
 
-    def _to_gemini_contents(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        contents: list[dict[str, Any]] = []
-
+    def _to_gemini_contents(self, messages):
+        contents = []
         for msg in messages:
             role = msg.get("role")
             content = msg.get("content", "")
@@ -68,7 +51,6 @@ class GeminiAdapter(ModelAdapter):
                     contents.append({"role": gemini_role, "parts": [{"text": content}]})
                 continue
 
-            # content bir blok listesi (text / tool_use / tool_result)
             parts = []
             for block in content:
                 btype = block.get("type")
@@ -78,15 +60,16 @@ class GeminiAdapter(ModelAdapter):
 
                 elif btype == "tool_use":
                     self._call_id_to_name[block["id"]] = block["name"]
-                    part_dict: dict[str, Any] = {
+                    part_dict = {
                         "function_call": {
                             "name": block["name"],
                             "args": block.get("input", {}),
                         }
                     }
-                    signature = self._call_id_to_signature.get(block["id"])
-                    if signature:
-                        part_dict["thought_signature"] = signature
+                    signature = self._call_id_to_signature.get(
+                        block["id"], "skip_thought_signature_validator"
+                    )
+                    part_dict["thought_signature"] = signature
                     parts.append(part_dict)
 
                 elif btype == "tool_result":
@@ -106,17 +89,11 @@ class GeminiAdapter(ModelAdapter):
 
         return contents
 
-    def complete(
-        self,
-        messages: list[dict[str, Any]],
-        system: str = "",
-        tools: Optional[list[dict[str, Any]]] = None,
-        max_tokens: int = 1024,
-    ) -> ModelResponse:
+    def complete(self, messages, system: str = "", tools=None, max_tokens: int = 1024):
         contents = self._to_gemini_contents(messages)
         gemini_tools = self._tools_to_gemini(tools)
 
-        model_kwargs: dict[str, Any] = {}
+        model_kwargs = {}
         if system:
             model_kwargs["system_instruction"] = system
         if gemini_tools:
@@ -129,8 +106,8 @@ class GeminiAdapter(ModelAdapter):
             generation_config={"max_output_tokens": max_tokens},
         )
 
-        text_parts: list[str] = []
-        tool_calls: list[ToolCall] = []
+        text_parts = []
+        tool_calls = []
 
         if response.candidates:
             for idx, part in enumerate(response.candidates[0].content.parts):
