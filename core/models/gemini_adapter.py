@@ -32,6 +32,11 @@ class GeminiAdapter(ModelAdapter):
         # call_id geldiği için Gemini'nin function_response'unda gereken
         # "name" alanını buradan buluyoruz.
         self._call_id_to_name: dict[str, str] = {}
+        # call_id -> thought_signature. Gemini'nin düşünen (thinking)
+        # modelleri bir fonksiyon çağrısı yaptığında bir "düşünce imzası"
+        # döndürür; bu imza sonraki turda aynı function_call parçasında
+        # geri gönderilmezse API 400 hatası verir.
+        self._call_id_to_signature: dict[str, bytes] = {}
 
     def name(self) -> str:
         return f"gemini:{self.model_name}"
@@ -73,14 +78,16 @@ class GeminiAdapter(ModelAdapter):
 
                 elif btype == "tool_use":
                     self._call_id_to_name[block["id"]] = block["name"]
-                    parts.append(
-                        {
-                            "function_call": {
-                                "name": block["name"],
-                                "args": block.get("input", {}),
-                            }
+                    part_dict: dict[str, Any] = {
+                        "function_call": {
+                            "name": block["name"],
+                            "args": block.get("input", {}),
                         }
-                    )
+                    }
+                    signature = self._call_id_to_signature.get(block["id"])
+                    if signature:
+                        part_dict["thought_signature"] = signature
+                    parts.append(part_dict)
 
                 elif btype == "tool_result":
                     tool_name = self._call_id_to_name.get(block["tool_use_id"], "unknown_tool")
@@ -133,6 +140,9 @@ class GeminiAdapter(ModelAdapter):
                     fc = part.function_call
                     call_id = f"{fc.name}_{idx}"
                     self._call_id_to_name[call_id] = fc.name
+                    signature = getattr(part, "thought_signature", None)
+                    if signature:
+                        self._call_id_to_signature[call_id] = signature
                     tool_calls.append(
                         ToolCall(
                             name=fc.name,
