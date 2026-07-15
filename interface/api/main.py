@@ -3,14 +3,15 @@ interface/api/main.py
 
 Kronos'un dış dünyaya açılan kapısı.
 
-Faz 2 eklentileri:
-  - /: basit bir web sohbet arayüzü (tarayıcıdan doğrudan konuşulabilir)
-  - /chat: artık session_id kabul ediyor, konuşmalar SQLite'ta kalıcı
-  - Araçlar: core/tools/basic_tools.py içindeki calculator ve
-    get_current_time otomatik olarak yükleniyor
+Faz 3 eklentileri:
+  - Mistral sağlayıcı seçeneği eklendi
+  - Fütbol puan durumu aracı (get_football_standings)
+  - Fütbol maç analizi aracı (analyze_football_match, 14 motor)
+  - Saatlik arka plan zamanlayıcısı: Süper Lig, Premier Lig ve Şampiyonlar
+    Ligi puan durumlarını önbelleğe alır (servis ayaktayken)
 
 Hangi model sağlayıcısının kullanılacağı MODEL_PROVIDER ortam değişkeni
-ile seçilir: "anthropic" veya "gemini" (varsayılan: gemini).
+ile seçilir: "anthropic", "gemini", "groq" veya "mistral" (varsayılan: groq).
 
 Çalıştırmak için (yerelde): uvicorn interface.api.main:app --reload
 """
@@ -22,17 +23,21 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 # Araçların @tool_registry.register dekoratörleri burada devreye girsin diye
-# modülü import ediyoruz (yan etkisi: araçlar registry'ye kaydolur).
+# modülleri import ediyoruz (yan etkisi: araçlar registry'ye kaydolur).
 from core.tools import basic_tools  # noqa: F401
+from core.tools import football_tools  # noqa: F401
+from core.tools import football_analysis_tools  # noqa: F401
 from core.tools.registry import tool_registry
 from core.memory.persistent import PersistentMemory
+from core.memory import football_store
 from orchestration.dispatcher import Dispatcher
+from orchestration.scheduler import Scheduler
 
-app = FastAPI(title="Kronos", version="0.2.0")
+app = FastAPI(title="Kronos", version="0.3.0")
 
 
 def _build_model():
-    provider = os.environ.get("MODEL_PROVIDER", "groq").lower()
+    provider = os.environ.get("MODEL_PROVIDER", "brain").lower()
 
     if provider == "anthropic":
         from core.models.anthropic_adapter import AnthropicAdapter
@@ -46,15 +51,65 @@ def _build_model():
         from core.models.groq_adapter import GroqAdapter
         return GroqAdapter()
 
+    if provider == "mistral":
+        from core.models.mistral_adapter import MistralAdapter
+        return MistralAdapter()
+
+    if provider == "cerebras":
+        from core.models.cerebras_adapter import CerebrasAdapter
+        return CerebrasAdapter()
+
+    if provider == "deepseek":
+        from core.models.deepseek_adapter import DeepseekAdapter
+        return DeepseekAdapter()
+
+    if provider == "openrouter":
+        from core.models.openrouter_adapter import OpenRouterAdapter
+        return OpenRouterAdapter()
+
+    if provider == "brain":
+        return _build_brain()
+
     raise RuntimeError(
-        f"Bilinmeyen MODEL_PROVIDER: '{provider}'. 'anthropic', 'gemini' veya 'groq' olmalı."
+        f"Bilinmeyen MODEL_PROVIDER: '{provider}'. "
+        "'brain', 'anthropic', 'gemini', 'groq', 'mistral', 'cerebras', "
+        "'deepseek' veya 'openrouter' olmalı."
     )
+
+
+def _build_brain():
+    """
+    Otomatik yedekleme zinciri: Groq → Mistral → Gemini → Cerebras → DeepSeek.
+    Sadece ortam değişkeni (API anahtarı) tanımlı olan sağlayıcılar zincire
+    dahil edilir - anahtarı olmayan sağlayıcı sessizce atlanır.
+    """
+    from core.models.brain_adapter import BrainAdapter
+
+    candidates = [
+        ("GROQ_API_KEY", "core.models.groq_adapter", "GroqAdapter"),
+        ("MISTRAL_API_KEY", "core.models.mistral_adapter", "MistralAdapter"),
+        ("GEMINI_API_KEY", "core.models.gemini_adapter", "GeminiAdapter"),
+        ("CEREBRAS_API_KEY", "core.models.cerebras_adapter", "CerebrasAdapter"),
+        ("DEEPSEEK_API_KEY", "core.models.deepseek_adapter", "DeepseekAdapter"),
+    ]
+
+    adapters = []
+    for env_key, module_path, class_name in candidates:
+        if not os.environ.get(env_key):
+            continue
+        module = __import__(module_path, fromlist=[class_name])
+        adapter_cls = getattr(module, class_name)
+        try:
+            adapters.append(adapter_cls())
+        except Exception as exc:
+            print(f"[Kronos] {class_name} başlatılamadı: {exc}")
+
+    return BrainAdapter(adapters)
 
 
 _model = _build_model()
 _SYSTEM_PROMPT = "Sen Kronos'sun: yardımsever, doğrudan konuşan bir asistansın."
 
-# Her session_id için ayrı bir Dispatcher (ayrı kalıcı hafıza) tutuyoruz.
 _dispatchers: dict[str, Dispatcher] = {}
 
 
@@ -67,6 +122,26 @@ def _get_dispatcher(session_id: str) -> Dispatcher:
             memory=PersistentMemory(session_id=session_id),
         )
     return _dispatchers[session_id]
+
+
+def _refresh_football_cache() -> None:
+    for league_key in football_tools.LEAGUES:
+        try:
+            table = football_tools.fetch_league_table(league_key)
+            football_store.save_standings(
+                league_key, football_tools.LEAGUES[league_key]["name"], table
+            )
+        except Exception as exc:
+            print(f"[Kronos] {league_key} verisi çekilemedi: {exc}")
+
+
+_scheduler = Scheduler()
+_scheduler.add_interval_job("football_standings_refresh", 3600, _refresh_football_cache)
+
+
+@app.on_event("startup")
+def _on_startup() -> None:
+    _scheduler.start()
 
 
 class ChatRequest(BaseModel):
