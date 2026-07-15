@@ -88,9 +88,9 @@ def _build_brain():
     candidates = [
         ("GROQ_API_KEY", "core.models.groq_adapter", "GroqAdapter"),
         ("MISTRAL_API_KEY", "core.models.mistral_adapter", "MistralAdapter"),
-        ("GEMINI_API_KEY", "core.models.gemini_adapter", "GeminiAdapter"),
         ("CEREBRAS_API_KEY", "core.models.cerebras_adapter", "CerebrasAdapter"),
         ("DEEPSEEK_API_KEY", "core.models.deepseek_adapter", "DeepseekAdapter"),
+        ("GEMINI_API_KEY", "core.models.gemini_adapter", "GeminiAdapter"),
     ]
 
     adapters = []
