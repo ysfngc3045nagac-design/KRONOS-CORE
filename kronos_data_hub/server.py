@@ -4,8 +4,9 @@ Bu dosya, veri toplama sistemini bir web sayfasi/API olarak disariya acar.
 Render'da ayri bir Web Service olarak calistirilmak icin tasarlandi.
 """
 import os
+import subprocess
 from datetime import datetime
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, redirect
 from database.sqlite_manager import SQLiteManager
 from core.source_manager import SourceManager
 
@@ -40,6 +41,10 @@ td, th { padding:8px 12px; border-bottom:1px solid #21262d; text-align:left; }
 <body>
 <h1>Kronos Data Hub</h1>
 <p>Son kontrol: {{ now }} — <span class="badge">calisiyor</span></p>
+<p><a href="/collect" style="background:#238636;color:white;padding:10px 16px;border-radius:6px;text-decoration:none;font-weight:bold;">Veri Topla (calistir)</a></p>
+{% if collect_result %}
+<pre style="background:#161b22;padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;">{{ collect_result }}</pre>
+{% endif %}
 <table>
 <tr><th>Tablo</th><th>Kayit Sayisi</th></tr>
 {% for t, c in counts.items() %}
@@ -47,7 +52,7 @@ td, th { padding:8px 12px; border-bottom:1px solid #21262d; text-align:left; }
 {% endfor %}
 </table>
 <p style="margin-top:20px;color:#8b949e;font-size:13px;">
-API uc noktalari: <code>/health</code> · <code>/stats</code> · <code>/sources</code>
+API uc noktalari: <code>/health</code> · <code>/stats</code> · <code>/sources</code> · <code>/collect</code>
 </p>
 </body>
 </html>
@@ -69,7 +74,22 @@ def get_counts():
 def dashboard():
     counts = get_counts()
     return render_template_string(
-        PAGE_TEMPLATE, counts=counts, now=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        PAGE_TEMPLATE, counts=counts, now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        collect_result=None
+    )
+
+
+@app.route("/collect")
+def collect():
+    result = subprocess.run(
+        "python3 main.py --mode collect --source all",
+        shell=True, capture_output=True, text=True, cwd=os.path.dirname(os.path.abspath(__file__))
+    )
+    output = result.stdout + "\n" + result.stderr
+    counts = get_counts()
+    return render_template_string(
+        PAGE_TEMPLATE, counts=counts, now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        collect_result=output
     )
 
 
