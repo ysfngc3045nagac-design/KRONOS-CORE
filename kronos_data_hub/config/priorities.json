@@ -1,0 +1,2 @@
+{"priority_rules": {"data_freshness_weight": 0.30, "data_accuracy_weight": 0.25, "coverage_weight": 0.20, "reliability_weight": 0.15, "speed_weight": 0.10},
+ "fallback_chain": ["fbref", "understat", "sofascore", "football_data"]}
