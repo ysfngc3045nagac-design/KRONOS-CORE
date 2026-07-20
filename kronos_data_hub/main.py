@@ -90,6 +90,9 @@ def mode_collect(ctx, source="all", **kwargs):
         sources = {source: source_manager.get_source(source)}
     results = {}
     for sid, config in sources.items():
+        if source == "all" and config and not config.get("bulk_collectable", True):
+            logger.info(f"'{sid}' atlandi (bulk_collectable=false)")
+            continue
         collector = source_manager.get_collector(sid)
         if collector:
             try:

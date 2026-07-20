@@ -109,9 +109,12 @@ class OddsAPIIOCollector(BaseCollector):
             (f"%{home}%", f"%{away}%", date))
         if existing:
             return existing["id"]
+        home_team_id = self._get_or_create_team_id(home)
+        away_team_id = self._get_or_create_team_id(away)
         return self.db.insert("matches", {
             "source_id": self.source_id, "source_match_id": record.get("event_id", ""),
             "season": date[:4] if date else "unknown", "match_date": date,
             "match_time": (record.get("commence_time") or "")[11:16],
+            "home_team_id": home_team_id, "away_team_id": away_team_id,
             "status": "scheduled", "is_processed": 0,
         })

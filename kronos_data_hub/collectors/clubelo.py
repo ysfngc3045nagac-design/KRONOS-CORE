@@ -42,11 +42,28 @@ class ClubELOCollector(BaseCollector):
         return normalized
 
     def _save_elo_ratings(self, records):
+        # DUZELTME: Onceki surumde her satirda UPDATE calistiriliyor, ama
+        # etkilenen satir sayisi (rowcount) hic kontrol edilmiyordu - isim
+        # eslesmese bile "saved" sayaci artiyordu, bu yuzden loglar "basarili"
+        # gosteriyordu halbuki hicbir takima elo yazilmamis olabiliyordu.
+        # Simdi: (1) rowcount kontrol ediliyor, (2) tam eslesme once denenir,
+        # (3) olmazsa LIKE ile daha esnek deneniyor, (4) hicbiri tutmazsa bu
+        # satir sayilmiyor ve kac tanesinin eslesmedigi loglaniyor.
         saved = 0
+        unmatched = []
         for record in records:
-            if not record.get("club"):
+            club = (record.get("club") or "").strip()
+            if not club:
                 continue
-            self.db.execute("UPDATE teams SET elo_rating = ? WHERE name LIKE ? OR short_name LIKE ?",
-                (record.get("elo", 1500), f"%{record['club']}%", f"%{record['club']}%"))
-            saved += 1
+            cur = self.db.execute("UPDATE teams SET elo_rating = ? WHERE name = ? OR short_name = ?",
+                (record.get("elo", 1500), club, club))
+            if cur.rowcount == 0:
+                cur = self.db.execute("UPDATE teams SET elo_rating = ? WHERE name LIKE ? OR short_name LIKE ?",
+                    (record.get("elo", 1500), f"%{club}%", f"%{club}%"))
+            if cur.rowcount and cur.rowcount > 0:
+                saved += 1
+            else:
+                unmatched.append(club)
+        if unmatched:
+            self.logger.warning(f"ClubELO: {len(unmatched)} takim veritabaniyla eslesmedi (ornek: {unmatched[:5]})")
         return saved

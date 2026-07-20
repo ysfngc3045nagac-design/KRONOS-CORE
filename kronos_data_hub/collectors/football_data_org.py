@@ -79,15 +79,14 @@ class FootballDataOrgCollector(BaseCollector):
         for record in records:
             if not record.get("home_team") or not record.get("away_team"):
                 continue
-            for team_name in (record["home_team"], record["away_team"]):
-                self.db.insert("teams", {
-                    "name": team_name, "country": "", "source_id": self.source_id,
-                    "source_team_id": f"fdorg_{team_name.replace(' ', '_')}", "is_active": 1,
-                }, conflict_resolution="IGNORE")
+            home_team_id = self._get_or_create_team_id(record["home_team"],
+                source_team_id=f"fdorg_{record['home_team'].replace(' ', '_')}")
+            away_team_id = self._get_or_create_team_id(record["away_team"],
+                source_team_id=f"fdorg_{record['away_team'].replace(' ', '_')}")
             self.db.insert("matches", {
                 "source_id": self.source_id, "source_match_id": str(record.get("match_id", "")),
                 "season": record.get("season") or "unknown", "match_date": record.get("match_date", ""),
-                "match_time": record.get("match_time", ""), "home_team_id": None, "away_team_id": None,
+                "match_time": record.get("match_time", ""), "home_team_id": home_team_id, "away_team_id": away_team_id,
                 "home_goals": record.get("home_goals"), "away_goals": record.get("away_goals"),
                 "round": str(record.get("matchday", "")),
                 "status": "finished" if record.get("home_goals") is not None else "scheduled",

@@ -73,14 +73,14 @@ class FootballDataCollector(BaseCollector):
         for record in records:
             if not record.get("home_team") or not record.get("away_team"):
                 continue
-            for team_name, is_home in [(record["home_team"], 1), (record["away_team"], 0)]:
-                self.db.insert("teams", {"name": team_name, "country": self._get_country(league), "league_id": league_id,
-                    "source_id": self.source_id, "source_team_id": f"{league}_{team_name.replace(' ', '_')}",
-                    "is_active": 1}, conflict_resolution="IGNORE")
+            home_team_id = self._get_or_create_team_id(record["home_team"], country=self._get_country(league),
+                league_id=league_id, source_team_id=f"{league}_{record['home_team'].replace(' ', '_')}")
+            away_team_id = self._get_or_create_team_id(record["away_team"], country=self._get_country(league),
+                league_id=league_id, source_team_id=f"{league}_{record['away_team'].replace(' ', '_')}")
             self.db.insert("matches", {"source_id": self.source_id,
                 "source_match_id": f"{season}_{league}_{record.get('match_date', '')}_{record['home_team']}_vs_{record['away_team']}",
                 "league_id": league_id, "season": season, "match_date": record.get("match_date", ""),
-                "match_time": record.get("match_time", ""), "home_team_id": None, "away_team_id": None,
+                "match_time": record.get("match_time", ""), "home_team_id": home_team_id, "away_team_id": away_team_id,
                 "home_goals": record.get("home_goals"), "away_goals": record.get("away_goals"),
                 "status": "finished" if record.get("home_goals") is not None else "scheduled",
                 "is_processed": 0}, conflict_resolution="IGNORE")

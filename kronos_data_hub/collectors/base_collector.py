@@ -35,6 +35,38 @@ class BaseCollector(ABC):
         self.stats = {"requests": 0, "successful": 0, "failed": 0, "cached": 0,
                       "records_collected": 0, "last_run": None, "total_time_ms": 0}
 
+    def _get_or_create_team_id(self, name, country="", league_id=None, source_team_id=None):
+        """
+        DUZELTME: Onceki surumde her collector takimi teams tablosuna ekliyor
+        ama donen id'yi hicbir zaman geri okuyup matches.home_team_id /
+        away_team_id alanlarina yazmiyordu. Sonuc: 760 mac, 40 takim vardi
+        ama aralarinda TEK BIR baglanti yoktu, /match_data hep bos donuyordu.
+
+        Bu fonksiyon: (1) takimi source_id+source_team_id ile UNIQUE olarak
+        ekler, (2) o kaydin gercek id'sini SELECT ile geri okur, (3) eger
+        ayni isimde baska bir source'tan zaten bir takim varsa (or.
+        football_data 'Arsenal' eklemis, api_football de 'Arsenal'
+        gonderiyor) onunla aynilastirmaya calisir ki farkli kaynaklardan
+        gelen maclar ayni takim id'sinde bulusabilsin.
+        """
+        if not name:
+            return None
+        name = name.strip()
+        source_team_id = source_team_id or f"{self.source_id}_{name.replace(' ', '_')}"
+        self.db.insert("teams", {
+            "name": name, "country": country, "league_id": league_id,
+            "source_id": self.source_id, "source_team_id": source_team_id, "is_active": 1,
+        }, conflict_resolution="IGNORE")
+        row = self.db.fetch_one(
+            "SELECT id FROM teams WHERE source_id = ? AND source_team_id = ?",
+            (self.source_id, source_team_id))
+        if row:
+            return row["id"]
+        row = self.db.fetch_one("SELECT id FROM teams WHERE name = ? ORDER BY id LIMIT 1", (name,))
+        if row:
+            return row["id"]
+        return None
+
     def _build_url(self, endpoint_key, **kwargs):
         base = self.config.get("base_url", "").rstrip("/")
         endpoint = self.config.get("endpoints", {}).get(endpoint_key, "")

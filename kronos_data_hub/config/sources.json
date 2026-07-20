@@ -34,7 +34,7 @@
       "endpoints": {"events": "/sport/football/scheduled-events/{date}", "event_details": "/event/{event_id}", "event_statistics": "/event/{event_id}/statistics", "team": "/team/{team_id}"},
       "rate_limit": 20, "timeout": 25, "retry_count": 3, "requires_auth": false,
       "supported_leagues": ["all"], "data_types": ["lineups","statistics","incidents","heatmaps"], "update_frequency": "realtime"},
-    "weather_api": {"name": "OpenWeatherMap", "type": "json_api", "enabled": true, "priority": 4,
+    "weather_api": {"name": "OpenWeatherMap", "type": "json_api", "enabled": true, "priority": 4, "bulk_collectable": false,
       "base_url": "https://api.openweathermap.org/data/2.5",
       "endpoints": {"current": "/weather", "forecast": "/forecast"},
       "rate_limit": 60, "timeout": 15, "retry_count": 2, "requires_auth": true, "api_key_ref": "weather_api_key",

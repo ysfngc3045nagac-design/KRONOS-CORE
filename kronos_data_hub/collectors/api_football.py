@@ -59,7 +59,12 @@ class APIFootballCollector(BaseCollector):
 
     def parse_response(self, response):
         data = self.json_parser.parse(response.content)
-        if not data or "response" not in data:
+        if not data:
+            return []
+        errors = data.get("errors")
+        if errors:
+            raise ValueError(f"API-Football hata dondu: {errors}")
+        if "response" not in data:
             return []
         records = []
         for item in data["response"]:
@@ -96,17 +101,14 @@ class APIFootballCollector(BaseCollector):
                 "source_id": self.source_id, "source_league_id": str(record.get("fixture_id", "")),
                 "season": str(record.get("season", season)), "is_active": 1,
             }, conflict_resolution="IGNORE")
-            for team_name in (record["home_team"], record["away_team"]):
-                self.db.insert("teams", {
-                    "name": team_name, "country": record.get("country", ""),
-                    "source_id": self.source_id,
-                    "source_team_id": f"apifootball_{team_name.replace(' ', '_')}",
-                    "is_active": 1,
-                }, conflict_resolution="IGNORE")
+            home_team_id = self._get_or_create_team_id(record["home_team"], country=record.get("country", ""),
+                source_team_id=f"apifootball_{record['home_team'].replace(' ', '_')}")
+            away_team_id = self._get_or_create_team_id(record["away_team"], country=record.get("country", ""),
+                source_team_id=f"apifootball_{record['away_team'].replace(' ', '_')}")
             self.db.insert("matches", {
                 "source_id": self.source_id, "source_match_id": str(record.get("fixture_id", "")),
                 "season": str(record.get("season", season)), "match_date": record.get("match_date", ""),
-                "match_time": record.get("match_time", ""), "home_team_id": None, "away_team_id": None,
+                "match_time": record.get("match_time", ""), "home_team_id": home_team_id, "away_team_id": away_team_id,
                 "home_goals": record.get("home_goals"), "away_goals": record.get("away_goals"),
                 "referee": record.get("referee"),
                 "status": "finished" if record.get("home_goals") is not None else "scheduled",
