@@ -41,6 +41,35 @@ def _format_report(home_team: str, away_team: str, report: dict) -> str:
     return "\n".join(lines)
 
 
+def _normalize_hub_match_data(match: dict) -> dict:
+    """
+    DUZELTME: fetch_real_match_data (kronos_data_hub'daki /match_data) sonucu
+    home_scored/away_scored, home_conceded/away_conceded, home_recent_streak/
+    away_recent_streak, home_injured_players/away_injured_players gibi
+    home_/away_ onekli alanlar donduruyor. Ama asagidaki motor katmani
+    (GoalAgent, StreakAgent, InjuryAgent, FixtureAgent) onneksiz "scored",
+    "conceded", "recent_streak", "injured_players" alanlarini okuyor.
+
+    Bu iki sema hicbir yerde eslesmiyordu: model tool aciklamasindaki
+    talimata uyup fetch_real_match_data'nin donen match_data'sini oldugu
+    gibi analyze_football_match'e iletince, GoalAgent/StreakAgent/
+    InjuryAgent bu alanlari BULAMIYOR ve sessizce notr varsayilana
+    duşuyordu - yani gercek veri cekilmis olsa bile analiz onu
+    kullanmiyordu. Burada ev sahibi takimin (perspektif motoru "home"
+    bayrağına gore calisiyor) alanlari onneksiz karsiliklarina esleniyor.
+    Mevcut onneksiz bir alan varsa (dogrudan cagrida oldugu gibi) ezilmez.
+    """
+    match = dict(match)
+    mapping = {
+        "home_scored": "scored", "home_conceded": "conceded",
+        "home_recent_streak": "recent_streak", "home_injured_players": "injured_players",
+    }
+    for hub_key, engine_key in mapping.items():
+        if hub_key in match and engine_key not in match:
+            match[engine_key] = match[hub_key]
+    return match
+
+
 @tool_registry.register(
     name="analyze_football_match",
     description=(
@@ -76,7 +105,7 @@ def _format_report(home_team: str, away_team: str, report: dict) -> str:
     },
 )
 def analyze_football_match(home_team: str, away_team: str, match_data: dict | None = None) -> str:
-    match = dict(match_data or {})
+    match = _normalize_hub_match_data(dict(match_data or {}))
     match.setdefault("home", True)
     match.setdefault("id", f"{home_team}-{away_team}")
 

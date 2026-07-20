@@ -21,12 +21,13 @@ class UnderstatCollector(BaseCollector):
             matches = self._parse_matches(data.get("datesData", []))
             players = self._parse_players(data.get("playersData", []))
             saved_matches = self._save_matches(matches, league, season)
+            saved_players = self._save_players(players)
             elapsed = int((datetime.now() - start_time).total_seconds() * 1000)
             self.stats["successful"] += 1
-            self.stats["records_collected"] += saved_matches
-            self._save_collection_log(f"understat_{league}_{season}", "success", saved_matches, "", elapsed)
+            self.stats["records_collected"] += saved_matches + saved_players
+            self._save_collection_log(f"understat_{league}_{season}", "success", saved_matches + saved_players, "", elapsed)
             self._update_source_health(True, elapsed)
-            return {"status": "success", "matches": saved_matches, "players": len(players), "league": league, "season": season, "duration_ms": elapsed}
+            return {"status": "success", "matches": saved_matches, "players": saved_players, "league": league, "season": season, "duration_ms": elapsed}
         except Exception as e:
             elapsed = int((datetime.now() - start_time).total_seconds() * 1000)
             self.stats["failed"] += 1
@@ -86,11 +87,40 @@ class UnderstatCollector(BaseCollector):
         for match in matches:
             if not match.get("home_team") or not match.get("away_team"):
                 continue
+            # DUZELTME: home_team_id/away_team_id hep None yaziliyordu, bu yuzden
+            # understat maclari hicbir takima baglanamiyordu. Diger collector'lerle
+            # ayni desen (_get_or_create_team_id) kullanilarak baglanti kuruluyor.
+            home_team_id = self._get_or_create_team_id(match["home_team"],
+                source_team_id=f"understat_{match['home_team'].replace(' ', '_')}")
+            away_team_id = self._get_or_create_team_id(match["away_team"],
+                source_team_id=f"understat_{match['away_team'].replace(' ', '_')}")
             self.db.insert("matches", {"source_id": self.source_id, "source_match_id": str(match.get("match_id", "")),
                 "league_id": None, "season": season, "match_date": match.get("match_date", ""),
-                "match_time": match.get("match_time", ""), "home_team_id": None, "away_team_id": None,
+                "match_time": match.get("match_time", ""), "home_team_id": home_team_id, "away_team_id": away_team_id,
                 "home_goals": match.get("home_goals"), "away_goals": match.get("away_goals"),
                 "status": "finished" if match.get("is_finished") else "scheduled", "is_processed": 0}, conflict_resolution="IGNORE")
+            saved += 1
+        return saved
+
+    def _save_players(self, players):
+        """
+        DUZELTME: _parse_players() oyunculari cekiyordu ama hicbir yerde
+        db.insert("players", ...) cagrilmiyordu - sonuc dashboard'da hep
+        players=0 gorunuyordu. Simdi her oyuncu, mumkunse takimina
+        baglanarak (team_id) players tablosuna yaziliyor.
+        """
+        saved = 0
+        for player in players:
+            name = player.get("name", "")
+            if not name:
+                continue
+            team_id = None
+            team_name = player.get("team", "")
+            if team_name:
+                team_id = self._get_or_create_team_id(team_name,
+                    source_team_id=f"understat_{team_name.replace(' ', '_')}")
+            self._get_or_create_player_id(name, team_id=team_id, position=player.get("position", ""),
+                source_player_id=f"understat_{player.get('player_id', name.replace(' ', '_'))}")
             saved += 1
         return saved
 

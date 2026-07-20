@@ -75,18 +75,38 @@ class PersistentMemory:
 
     def _trim(self) -> None:
         cur = self._conn.execute(
-            "SELECT COUNT(*) FROM messages WHERE session_id = ?", (self.session_id,)
+            "SELECT id, payload FROM messages WHERE session_id = ? ORDER BY id ASC",
+            (self.session_id,),
         )
-        count = cur.fetchone()[0]
-        if count > self.max_messages:
-            overflow = count - self.max_messages
-            self._conn.execute(
-                """
-                DELETE FROM messages WHERE id IN (
-                    SELECT id FROM messages WHERE session_id = ?
-                    ORDER BY id ASC LIMIT ?
+        rows = cur.fetchall()
+        if len(rows) <= self.max_messages:
+            return
+        overflow = len(rows) - self.max_messages
+        # DUZELTME: eskiden satirlar id sirasina gore tek tek siliniyordu.
+        # Bu, bir assistant "tool_use" satiriyla onu izleyen "tool_result"
+        # satirini ortadan bolebiliyordu - sonuc, saglayiciya (ozellikle
+        # OpenAI uyumlu Groq/Mistral, "tool" rolundeki mesajin karsiligi
+        # olan tool_calls'u bulamayinca hata veriyor) bozuk/eslesmeyen bir
+        # baglam gonderiliyordu ve sohbet o session'da calismaz hale
+        # gelebiliyordu. Simdi kesim noktasi, bir tool_use+tool_result
+        # ciftini asla bolmeyecek sekilde ayarlaniyor.
+        cutoff = overflow
+        if 0 < cutoff < len(rows):
+            def _has_block_type(payload_json: str, block_type: str) -> bool:
+                payload = json.loads(payload_json)
+                content = payload.get("content")
+                return isinstance(content, list) and any(
+                    isinstance(b, dict) and b.get("type") == block_type for b in content
                 )
-                """,
-                (self.session_id, overflow),
+
+            if _has_block_type(rows[cutoff - 1][1], "tool_use") and _has_block_type(
+                rows[cutoff][1], "tool_result"
+            ):
+                cutoff += 1  # cifti birlikte sil, yariya bolme
+
+        ids_to_delete = [row[0] for row in rows[:cutoff]]
+        if ids_to_delete:
+            self._conn.executemany(
+                "DELETE FROM messages WHERE id = ?", [(i,) for i in ids_to_delete]
             )
             self._conn.commit()

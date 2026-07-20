@@ -63,11 +63,41 @@ class NewsCollector(BaseCollector):
         return "general"
 
     def _save_news(self, records):
+        # DUZELTME: category alani "injury"/"transfer" olarak etiketleniyordu
+        # ama sadece news tablosuna yaziliyordu; ayri injuries/transfers
+        # tablolari (dashboard'da her zaman 0 gorunen) hicbir zaman
+        # doldurulmuyordu. Not: haber metninden guvenilir sekilde oyuncu adi
+        # cikarmak icin NLP yok; burada sadece baslikta gecen bilinen takim
+        # adina gore team_id eslestirilip kabaca kayit aciliyor (player_id
+        # bos kalabilir). Daha dogru veri icin API-Football gibi yapisal bir
+        # sakatlik/transfer kaynagi eklenmesi onerilir.
         saved = 0
         for record in records:
+            team_id = self._match_team_in_text(record["title"])
             self.db.insert("news", {"title": record["title"], "content": record["content"], "url": record["url"],
                 "source_id": self.source_id, "source_name": record["source_name"], "category": record["category"],
-                "published_at": record["published_at"], "sentiment": record["sentiment"],
+                "team_id": team_id, "published_at": record["published_at"], "sentiment": record["sentiment"],
                 "relevance_score": record["relevance_score"], "is_processed": 0}, conflict_resolution="IGNORE")
             saved += 1
+            if record["category"] == "injury":
+                self.db.insert("injuries", {
+                    "player_id": None, "team_id": team_id, "injury_type": "unspecified",
+                    "injury_detail": record["title"], "expected_return": None, "status": "out",
+                    "source_id": self.source_id, "reported_at": record["published_at"],
+                }, conflict_resolution="IGNORE")
+            elif record["category"] == "transfer":
+                self.db.insert("transfers", {
+                    "player_id": None, "from_team_id": None, "to_team_id": team_id,
+                    "transfer_type": "news", "fee": 0.0, "currency": "EUR",
+                    "transfer_date": (record["published_at"] or "")[:10], "season": "",
+                    "source_id": self.source_id,
+                }, conflict_resolution="IGNORE")
         return saved
+
+    def _match_team_in_text(self, text):
+        if not text:
+            return None
+        row = self.db.fetch_one(
+            "SELECT id FROM teams WHERE ? LIKE '%' || name || '%' ORDER BY LENGTH(name) DESC LIMIT 1",
+            (text,))
+        return row["id"] if row else None

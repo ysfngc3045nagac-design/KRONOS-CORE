@@ -15,16 +15,24 @@ class FBRefCollector(BaseCollector):
         self.stats["last_run"] = start_time.isoformat()
         try:
             matches = self._collect_matches(league, season)
+            # DUZELTME: matches listesi olusturuluyordu ama hicbir zaman
+            # db.insert("matches", ...) ile kaydedilmiyordu; "success, N kayit"
+            # loglaniyordu ama veritabanina TEK SATIR yazilmiyordu. Simdi
+            # kaydediliyor ve gercek kaydedilen sayi raporlaniyor.
+            saved = self._save_matches(matches, league, season)
             detailed = kwargs.get("detailed", False)
+            saved_stats = 0
             if detailed:
                 for match in matches[:10]:
-                    self._collect_match_details(match)
+                    detail = self._collect_match_details(match)
+                    saved_stats += self._save_match_details(detail, league, season)
             elapsed = int((datetime.now() - start_time).total_seconds() * 1000)
             self.stats["successful"] += 1
-            self.stats["records_collected"] += len(matches)
-            self._save_collection_log(f"fbref_{league}_{season}", "success", len(matches), "", elapsed)
+            self.stats["records_collected"] += saved
+            self._save_collection_log(f"fbref_{league}_{season}", "success", saved, "", elapsed)
             self._update_source_health(True, elapsed)
-            return {"status": "success", "records": len(matches), "league": league, "season": season, "duration_ms": elapsed}
+            return {"status": "success", "records": saved, "match_statistics": saved_stats,
+                    "league": league, "season": season, "duration_ms": elapsed}
         except Exception as e:
             elapsed = int((datetime.now() - start_time).total_seconds() * 1000)
             self.stats["failed"] += 1
@@ -50,6 +58,60 @@ class FBRefCollector(BaseCollector):
                 "collected_at": datetime.now().isoformat()
             })
         return normalized
+
+    def _save_matches(self, matches, league, season):
+        saved = 0
+        for match in matches:
+            if not match.get("home_team") or not match.get("away_team"):
+                continue
+            home_team_id = self._get_or_create_team_id(match["home_team"],
+                source_team_id=f"fbref_{league}_{match['home_team'].replace(' ', '_')}")
+            away_team_id = self._get_or_create_team_id(match["away_team"],
+                source_team_id=f"fbref_{league}_{match['away_team'].replace(' ', '_')}")
+            self.db.insert("matches", {
+                "source_id": self.source_id,
+                "source_match_id": f"fbref_{league}_{season}_{match.get('match_date', '')}_{match['home_team']}_vs_{match['away_team']}",
+                "league_id": None, "season": season, "match_date": match.get("match_date", ""),
+                "match_time": match.get("match_time", ""), "home_team_id": home_team_id, "away_team_id": away_team_id,
+                "home_goals": match.get("home_goals"), "away_goals": match.get("away_goals"),
+                "status": "finished" if match.get("home_goals") is not None else "scheduled",
+                "venue": match.get("venue", ""), "referee": match.get("referee", ""),
+                "attendance": match.get("attendance") or 0, "round": match.get("round", ""),
+                "is_processed": 0}, conflict_resolution="IGNORE")
+            saved += 1
+        return saved
+
+    def _save_match_details(self, match, league, season):
+        """
+        DUZELTME: detailed=True ile cekilen istatistik tablolari ve xG
+        degerleri hicbir zaman match_statistics tablosuna yazilmiyordu -
+        _collect_match_details sadece dict'e ekleyip donduruyordu. Simdi
+        ilgili mac (varsa) bulunup her takim icin match_statistics satiri
+        olusturuluyor.
+        """
+        if not match.get("statistics"):
+            return 0
+        row = self.db.fetch_one(
+            "SELECT id FROM matches WHERE match_date = ? AND home_team_id IN "
+            "(SELECT id FROM teams WHERE name = ?) AND away_team_id IN (SELECT id FROM teams WHERE name = ?)",
+            (match.get("match_date", ""), match.get("home_team", ""), match.get("away_team", "")))
+        if not row:
+            return 0
+        match_id = row["id"]
+        saved = 0
+        for stat_block in match.get("statistics", []):
+            team_type = stat_block.get("team_type", "home")
+            team_name = match.get("home_team") if team_type == "home" else match.get("away_team")
+            team_row = self.db.fetch_one("SELECT id FROM teams WHERE name = ?", (team_name,))
+            if not team_row:
+                continue
+            self.db.insert("match_statistics", {
+                "match_id": match_id, "team_id": team_row["id"], "is_home": 1 if team_type == "home" else 0,
+                "xg": match.get("home_xg") if team_type == "home" else match.get("away_xg", 0.0),
+                "source_id": self.source_id,
+            }, conflict_resolution="IGNORE")
+            saved += 1
+        return saved
 
     def _collect_match_details(self, match):
         report_url = match.get("match_report_url", "")

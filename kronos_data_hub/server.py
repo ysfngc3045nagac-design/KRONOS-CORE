@@ -89,8 +89,7 @@ def collect():
         "python3 main.py --mode collect --source all",
         shell=True, capture_output=True, text=True, cwd=os.path.dirname(os.path.abspath(__file__))
     )
-    output = result.stdout + "
-" + result.stderr
+    output = result.stdout + "\n" + result.stderr
     counts = get_counts()
     return render_template_string(
         PAGE_TEMPLATE, counts=counts, now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

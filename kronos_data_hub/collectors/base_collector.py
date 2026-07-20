@@ -67,6 +67,33 @@ class BaseCollector(ABC):
             return row["id"]
         return None
 
+    def _get_or_create_player_id(self, name, team_id=None, position="", nationality="", source_player_id=None):
+        """
+        DUZELTME: 'players' tablosu semada var ama hicbir collector oyuncu
+        eklemiyordu (fbref, understat oyuncu verisini cekip donduruyordu
+        ama db.insert("players", ...) hicbir yerde cagrilmiyordu). Bu yuzden
+        players tablosu her zaman 0 kayit gosteriyordu. _get_or_create_team_id
+        ile ayni desen: source_id+source_player_id ile UNIQUE ekle, gercek
+        id'yi geri oku; bulunamazsa isme gore mevcut kaydi kullan.
+        """
+        if not name:
+            return None
+        name = name.strip()
+        source_player_id = source_player_id or f"{self.source_id}_{name.replace(' ', '_')}"
+        self.db.insert("players", {
+            "name": name, "position": position, "nationality": nationality, "team_id": team_id,
+            "source_id": self.source_id, "source_player_id": source_player_id, "is_active": 1,
+        }, conflict_resolution="IGNORE")
+        row = self.db.fetch_one(
+            "SELECT id FROM players WHERE source_id = ? AND source_player_id = ?",
+            (self.source_id, source_player_id))
+        if row:
+            return row["id"]
+        row = self.db.fetch_one("SELECT id FROM players WHERE name = ? ORDER BY id LIMIT 1", (name,))
+        if row:
+            return row["id"]
+        return None
+
     def _build_url(self, endpoint_key, **kwargs):
         base = self.config.get("base_url", "").rstrip("/")
         endpoint = self.config.get("endpoints", {}).get(endpoint_key, "")

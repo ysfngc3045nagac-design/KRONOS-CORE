@@ -3,6 +3,7 @@ core/models/gemini_adapter.py
 """
 
 import os
+import uuid
 from typing import Any, Optional
 
 import google.generativeai as genai
@@ -115,7 +116,14 @@ class GeminiAdapter(ModelAdapter):
                     text_parts.append(part.text)
                 elif getattr(part, "function_call", None) and part.function_call.name:
                     fc = part.function_call
-                    call_id = f"{fc.name}_{idx}"
+                    # DUZELTME: call_id eskiden f"{fc.name}_{idx}" idi. GeminiAdapter
+                    # tek bir global ornek olarak butun oturumlar arasinda paylasildigi
+                    # icin (bkz. interface/api/main.py: tek _model), iki farkli
+                    # kullanicinin ayni araci ayni indexte cagirmasi call_id
+                    # cakismasina ve _call_id_to_signature/_call_id_to_name
+                    # sozluklerinin birbirinin verisini ezmesine yol acabiliyordu.
+                    # uuid4 ile her cagriya gercekten benzersiz bir id veriliyor.
+                    call_id = f"{fc.name}_{uuid.uuid4().hex[:12]}"
                     self._call_id_to_name[call_id] = fc.name
                     signature = getattr(part, "thought_signature", None)
                     if signature:
