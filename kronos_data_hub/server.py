@@ -1,10 +1,10 @@
-       """
+"""
 KRONOS_DATA_HUB - Web Server
 Bu dosya, veri toplama sistemini bir web sayfasi/API olarak disariya acar.
 Render'da ayri bir Web Service olarak calistirilmak icin tasarlandi.
 
 DUZELTME (bu surum): /match_data endpoint'i eklendi. Bu endpoint olmadan
-chat botunun `fetch_real_match_data` araci her cagrida 404 aliyordu ve
+chat botunun fetch_real_match_data araci her cagrida 404 aliyordu ve
 gercek veriye hicbir zaman ulasamiyordu.
 """
 import os
@@ -117,7 +117,6 @@ def sources():
 
 
 def _find_team(name):
-    """İsme göre takım arar (tam eşleşme yoksa LIKE ile en yakınını bulur)."""
     if not name:
         return None
     row = db.fetch_one("SELECT * FROM teams WHERE lower(name) = lower(?)", (name,))
@@ -131,8 +130,6 @@ def _find_team(name):
 
 
 def _recent_form(team_id, limit=5):
-    """Bir takımın en son oynadığı `limit` maçtan skor listesi ve elde ettiği
-    puanları çıkarır. recent_results, scored, conceded alanlarını üretir."""
     rows = db.fetch_all(
         """
         SELECT home_team_id, away_team_id, home_goals, away_goals, match_date
@@ -179,10 +176,6 @@ def _latest_odds(home_id, away_id):
 
 @app.route("/match_data")
 def match_data():
-    """Chat botunun analyze_football_match aracına beslenecek gerçek veriyi
-    tek bir çağrıda döner. Örnek: /match_data?home=Galatasaray&away=Fenerbahce
-    Bulunamayan takım/veri alanları çıktıda yer almaz - modelin bunları
-    UYDURMAMASI, sadece dönen alanları kullanması gerekir."""
     home_name = request.args.get("home", "")
     away_name = request.args.get("away", "")
 
@@ -197,10 +190,7 @@ def match_data():
     }
 
     if not home or not away:
-        result["warning"] = (
-            "Bir veya iki takım veritabanında bulunamadı. Bu takımlar hakkında "
-            "istatistik UYDURMA - kullanıcıya veri bulunamadığını söyle."
-        )
+        result["warning"] = "Bir veya iki takim veritabaninda bulunamadi."
         return jsonify(result)
 
     match = {}
@@ -241,4 +231,4 @@ def match_data():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port) 
+    app.run(host="0.0.0.0", port=port)
