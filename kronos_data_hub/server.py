@@ -128,17 +128,48 @@ def sources():
         return jsonify({"error": str(e)}), 500
 
 
+def _normalize_tr(text):
+    """Turkce karakterleri ASCII esdegerlerine cevirir, kucuk harfe indirger.
+    'Fenerbahce' ile 'Fenerbahçe' gibi yazim farklarinin eslesmesini saglar."""
+    if not text:
+        return ""
+    replacements = {
+        "ç": "c", "Ç": "c", "ğ": "g", "Ğ": "g", "ı": "i", "I": "i",
+        "İ": "i", "ö": "o", "Ö": "o", "ş": "s", "Ş": "s", "ü": "u", "Ü": "u",
+    }
+    result = text
+    for tr_char, ascii_char in replacements.items():
+        result = result.replace(tr_char, ascii_char)
+    return result.lower().strip()
+
+
 def _find_team(name):
     if not name:
         return None
+    # 1) Birebir (case-insensitive) eslesme
     row = db.fetch_one("SELECT * FROM teams WHERE lower(name) = lower(?)", (name,))
     if row:
         return row
+    # 2) Kismi (LIKE) eslesme
     row = db.fetch_one(
         "SELECT * FROM teams WHERE lower(name) LIKE lower(?) ORDER BY length(name) ASC LIMIT 1",
         (f"%{name}%",),
     )
-    return row
+    if row:
+        return row
+    # 3) Turkce karakter normalize edilmis eslesme (ornek: 'Fenerbahce' -> 'Fenerbahçe')
+    # Takim sayisi az oldugu icin (~1000) tum tabloyu tarayip Python'da karsilastirmak
+    # performans sorunu yaratmaz.
+    normalized_query = _normalize_tr(name)
+    all_teams = db.fetch_all("SELECT * FROM teams")
+    best_match = None
+    for team in all_teams:
+        normalized_team_name = _normalize_tr(team["name"])
+        if normalized_query == normalized_team_name:
+            return team
+        if normalized_query in normalized_team_name and best_match is None:
+            best_match = team
+    return best_match
 
 
 def _recent_form(team_id, limit=5):
