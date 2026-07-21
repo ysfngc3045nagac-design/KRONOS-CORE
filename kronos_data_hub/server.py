@@ -13,10 +13,17 @@ from datetime import datetime
 from flask import Flask, jsonify, render_template_string, redirect, request
 from database.sqlite_manager import SQLiteManager
 from core.source_manager import SourceManager
+from drive_sync import download_db_from_drive, upload_db_to_drive
 
 app = Flask(__name__)
 
 DB_PATH = os.environ.get("KRONOS_DB_PATH", "data/kronos.db")
+
+# DUZELTME (Drive kalicilik): uygulama baslamadan once Drive'daki guncel
+# veritabanini indirmeyi dene. Render diski her deploy/restart'ta sifirlandigi
+# icin bu adim olmadan toplanan tum veri kaybolurdu.
+download_db_from_drive(DB_PATH)
+
 db = SQLiteManager(db_path=DB_PATH)
 source_manager = SourceManager(db=db)
 
@@ -91,6 +98,11 @@ def collect():
     )
     output = result.stdout + "\n" + result.stderr
     counts = get_counts()
+
+    # DUZELTME (Drive kalicilik): veri toplama bittiginde guncel dosyayi
+    # Drive'a yukle, boylece bir sonraki restart'ta veri kaybolmaz.
+    upload_db_to_drive(DB_PATH)
+
     return render_template_string(
         PAGE_TEMPLATE, counts=counts, now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         collect_result=output
