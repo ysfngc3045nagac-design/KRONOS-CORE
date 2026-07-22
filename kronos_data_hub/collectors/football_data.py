@@ -11,7 +11,13 @@ class FootballDataCollector(BaseCollector):
         "SP1": "La Liga", "SP2": "La Liga 2", "F1": "Ligue 1", "F2": "Ligue 2", "N1": "Eredivisie",
         "B1": "Jupiler Pro League", "P1": "Primeira Liga", "T1": "Super Lig", "G1": "Super League Greece"}
 
-    def collect(self, season="2425", league="E0", **kwargs):
+    def collect(self, season="2425", league="ALL", **kwargs):
+        # DUZELTME: league="ALL" verilirse, LEAGUE_CODES'taki her ligi
+        # (Super Lig / T1 dahil) tek tek toplar. /collect --source=all
+        # cagrisinda varsayilan artik "ALL" olacak sekilde main.py'de ayarlandi.
+        if league == "ALL":
+            return self.collect_all_leagues(season=season)
+
         start_time = datetime.now()
         self.stats["last_run"] = start_time.isoformat()
         try:
@@ -77,14 +83,33 @@ class FootballDataCollector(BaseCollector):
                 league_id=league_id, source_team_id=f"{league}_{record['home_team'].replace(' ', '_')}")
             away_team_id = self._get_or_create_team_id(record["away_team"], country=self._get_country(league),
                 league_id=league_id, source_team_id=f"{league}_{record['away_team'].replace(' ', '_')}")
+            source_match_id = f"{season}_{league}_{record.get('match_date', '')}_{record['home_team']}_vs_{record['away_team']}"
             self.db.insert("matches", {"source_id": self.source_id,
-                "source_match_id": f"{season}_{league}_{record.get('match_date', '')}_{record['home_team']}_vs_{record['away_team']}",
+                "source_match_id": source_match_id,
                 "league_id": league_id, "season": season, "match_date": record.get("match_date", ""),
                 "match_time": record.get("match_time", ""), "home_team_id": home_team_id, "away_team_id": away_team_id,
                 "home_goals": record.get("home_goals"), "away_goals": record.get("away_goals"),
                 "status": "finished" if record.get("home_goals") is not None else "scheduled",
                 "is_processed": 0}, conflict_resolution="IGNORE")
             saved += 1
+
+            # DUZELTME: Bet365 oranlari parse_response'ta zaten okunuyordu ama
+            # hicbir zaman odds tablosuna kaydedilmiyordu. Simdi kaydediliyor.
+            b365h, b365d, b365a = record.get("bet365_home"), record.get("bet365_draw"), record.get("bet365_away")
+            if b365h and b365d and b365a:
+                match_row = self.db.fetch_one(
+                    "SELECT id FROM matches WHERE source_id = ? AND source_match_id = ?",
+                    (self.source_id, source_match_id),
+                )
+                if match_row:
+                    try:
+                        self.db.insert("odds", {
+                            "match_id": match_row["id"], "source_id": self.source_id, "bookmaker": "Bet365",
+                            "market": "1X2", "home_odds": float(b365h), "draw_odds": float(b365d),
+                            "away_odds": float(b365a), "is_live": 0,
+                        }, conflict_resolution="IGNORE")
+                    except (ValueError, TypeError):
+                        pass
         return saved
 
     def _get_country(self, league_code):

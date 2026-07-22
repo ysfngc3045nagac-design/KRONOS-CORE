@@ -59,7 +59,7 @@ def initialize_system():
 
 def _register_collectors(source_manager, db, rate_limiter, retry_manager, cache):
     collectors_config = {
-        "football_data": (FootballDataCollector, {"season": "2425", "league": "E0"}),
+        "football_data": (FootballDataCollector, {"season": "2425", "league": "ALL"}),
         "fbref": (FBRefCollector, {"league": "Premier League", "season": "2024-2025"}),
         "understat": (UnderstatCollector, {"league": "EPL", "season": "2024"}),
         "odds_api": (OddsCollector, {"sport": "soccer_epl"}),
