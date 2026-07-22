@@ -57,6 +57,66 @@ def _format_table(league_name: str, table: list[dict], updated_at: str = "") -> 
     return "\n".join(lines)
 
 
+def fetch_upcoming_matches(league_key: str) -> list[dict]:
+    """TheSportsDB'den bir ligin yaklaşan maçlarını çeker (network gerektirir)."""
+    league = LEAGUES[league_key]
+    url = f"{THESPORTSDB_BASE}/eventsnextleague.php"
+    resp = requests.get(url, params={"id": league["id"]}, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("events") or []
+
+
+def _format_upcoming(league_name: str, events: list[dict]) -> str:
+    if not events:
+        return f"{league_name} için yaklaşan maç bulunamadı (fikstür henüz yayınlanmamış olabilir)."
+
+    lines = [f"{league_name} - Yaklaşan Maçlar"]
+    for ev in events[:15]:
+        date = ev.get("dateEvent", "?")
+        time_str = ev.get("strTime", "")
+        home = ev.get("strHomeTeam", "?")
+        away = ev.get("strAwayTeam", "?")
+        round_info = ev.get("intRound")
+        round_str = f" (Hafta {round_info})" if round_info else ""
+        time_part = f" {time_str[:5]}" if time_str else ""
+        lines.append(f"{date}{time_part} | {home} - {away}{round_str}")
+    return "\n".join(lines)
+
+
+@tool_registry.register(
+    name="get_upcoming_matches",
+    description=(
+        "Süper Lig, Premier Lig veya UEFA Şampiyonlar Ligi'nin yaklaşan/gelecek "
+        "maçlarını (fikstür, maç bülteni) döndürür. Tarih, saat, ev sahibi ve "
+        "deplasman takımlarını içerir."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "league": {
+                "type": "string",
+                "enum": ["super_lig", "premier_lig", "sampiyonlar_ligi"],
+                "description": "Hangi ligin fikstürü istendiği",
+            }
+        },
+        "required": ["league"],
+    },
+)
+def get_upcoming_matches(league: str) -> str:
+    if league not in LEAGUES:
+        return f"HATA: Bilinmeyen lig '{league}'. Geçerli değerler: {list(LEAGUES.keys())}"
+
+    league_name = LEAGUES[league]["name"]
+
+    try:
+        events = fetch_upcoming_matches(league)
+    except Exception as exc:
+        return f"HATA: {league_name} fikstürü alınamadı ({exc})"
+
+    return _format_upcoming(league_name, events)
+
+
 @tool_registry.register(
     name="get_football_standings",
     description=(
